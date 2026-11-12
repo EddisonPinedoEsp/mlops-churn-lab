@@ -87,13 +87,23 @@ uvicorn app.main:app --port 8000      # http://localhost:8000/docs
 
 ## Comparación de candidatos
 
-Validación cruzada estratificada de 5 folds sobre train. `GradientBoostingClassifier`
+Resultados del experimento `churn-prediction-fintech` en MLflow, con validación
+cruzada estratificada de 5 folds sobre 240 filas de train. `GradientBoostingClassifier`
 se ejecuta con `n_estimators=100`, `learning_rate=0.1`, `max_depth=3` y
 `random_state=42`; esos hiperparámetros se registran en MLflow.
 
 | Modelo | F1 CV (media ± std) | ROC-AUC CV (media ± std) |
 |---|---:|---:|
+| Regresión logística | 0.6666 ± 0.0454 | 0.7315 ± 0.0408 |
+| Random Forest | 0.6900 ± 0.0426 | 0.7326 ± 0.0421 |
+| XGBoost | 0.6829 ± 0.0656 | 0.7100 ± 0.0627 |
 | Gradient Boosting | 0.6476 ± 0.0761 | 0.6858 ± 0.0604 |
 
 El mejor candidato sigue siendo `random_forest` (F1 CV 0.6900), por lo que
 agregar Gradient Boosting no cambia la selección.
+
+Para consultar los runs en la interfaz de MLflow, ejecuta desde la raíz del proyecto:
+
+```bash
+mlflow ui --backend-store-uri ./mlruns
+```
