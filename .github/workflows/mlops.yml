@@ -1,0 +1,142 @@
+name: MLOps Pipeline - Churn Predictor
+
+# Cada job es una fase de CRISP-ML(Q) con su quality gate:
+# si el gate falla, el pipeline se detiene y nada llega a producción.
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'app/**'
+      - 'tests/**'
+      - 'configs/**'
+      - 'data/telco_customer_churn_mlops.csv'
+      - 'Dockerfile'
+      - 'requirements*.txt'
+      - '.github/workflows/mlops.yml'
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.10'
+  IMAGE_NAME: churn-predictor
+
+jobs:
+
+  # ── Q · Tests de código ────────────────────────────────────────────────────
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: Tests unitarios (contrato, pipeline de features, API)
+        run: pytest tests/ -v --tb=short
+
+  # ── Fase 1 · Data Understanding: contrato de datos ─────────────────────────
+  data-validation:
+    name: Data Validation
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: Validar contrato de datos
+        run: python src/validate_data.py
+      - name: Subir reporte de validación
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: data-validation-report
+          path: reports/data_validation.json
+
+  # ── Fase 2 · Data Preparation ──────────────────────────────────────────────
+  data-prep:
+    name: Data Preparation
+    runs-on: ubuntu-latest
+    needs: data-validation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - name: Limpiar y partir el dataset
+        run: python src/data_prep.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: data-prep-artifacts
+          path: data/
+
+  # ── Fase 3 · Modeling ──────────────────────────────────────────────────────
+  train:
+    name: Modeling
+    runs-on: ubuntu-latest
+    needs: data-prep
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: data-prep-artifacts
+          path: data/
+      - name: Entrenar baseline y candidatos con validación cruzada
+        run: python src/train.py --model all
+      - uses: actions/upload-artifact@v4
+        with:
+          name: train-artifacts
+          path: |
+            mlruns/
+            data/
+
+  # ── Fase 4 · Evaluation: quality gate + registro ───────────────────────────
+  evaluate:
+    name: Evaluation
+    runs-on: ubuntu-latest
+    needs: train
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          name: train-artifacts
+          path: .
+      - name: Evaluar, aplicar quality gate y registrar
+        run: python src/evaluate_and_register.py
+      - name: Resumen de evaluación
+        if: always()
+        run: |
+          if [ -f reports/model_card.md ]; then
+            cat reports/model_card.md >> $GITHUB_STEP_SUMMARY
+          elif [ -f reports/evaluation_report.json ]; then
+            echo "## Quality gate no superado" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat reports/evaluation_report.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-artifacts
+          retention-days: 30
+          path: |
+            data/
+            reports/
