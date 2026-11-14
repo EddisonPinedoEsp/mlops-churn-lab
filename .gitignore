@@ -84,9 +84,11 @@ temp/
 
 # Terraform
 infra/.terraform/
-infra/terraform.tfstate
+infra/terraform.tfstate*
 infra/terraform.tfstate.backup
 infra/terraform.tfstate.d/
+infra/registry/.terraform/
+infra/registry/terraform.tfstate*
 # Note: infra/.terraform.lock.hcl should be committed
 
 # draw.io temp files
