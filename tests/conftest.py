@@ -19,9 +19,13 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 # ── Datos de prueba ───────────────────────────────────────────────────────────
 
 MOCK_FEATURES = [
-    "gender", "SeniorCitizen", "tenure", "MonthlyCharges", "support_tickets",
-    "Contract_One Year", "Contract_Two Year",
-    "InternetService_Fiber", "InternetService_No",
+    "tenure_months",
+    "monthly_charges",
+    "support_tickets_last_6m",
+    "gender",
+    "contract_type",
+    "internet_service",
+    "senior_citizen",
 ]
 
 MOCK_MODEL_INFO = {
@@ -29,6 +33,8 @@ MOCK_MODEL_INFO = {
     "version": "2",
     "stage": "Production",
     "model_type": "LogisticRegression",
+    "threshold": 0.3,
+    "features": MOCK_FEATURES,
     "metrics": {"accuracy": 0.733, "f1": 0.692, "roc_auc": 0.828},
 }
 
@@ -49,13 +55,27 @@ SAMPLE_CUSTOMER = {
 def client():
     """TestClient con todos los artefactos ML mockeados (sin archivos reales)."""
     _model = MagicMock()
+    def mock_predict_proba(X):
+        n_samples = len(X) if hasattr(X, '__len__') else 1
+        return np.array([[0.15, 0.85]] * n_samples)
     _model.predict.return_value = np.array([1])
-    _model.predict_proba.return_value = np.array([[0.15, 0.85]])
+    _model.predict_proba.side_effect = mock_predict_proba
 
     _scaler = MagicMock()
     _scaler.transform.side_effect = lambda x: x.values
 
-    _features_df = pd.DataFrame(MOCK_FEATURES, columns=[0])
+    n = 300  # Mínimo 200 requerido por el contrato de datos
+    _features_df = pd.DataFrame({
+        "customer_id": [f"CUST{i:04d}" for i in range(1, n+1)],
+        "gender": (["Male", "Female"] * (n//2 + 1))[:n],
+        "senior_citizen": ([0, 1] * (n//2 + 1))[:n],
+        "tenure_months": [12 + (i % 100) for i in range(n)],
+        "contract_type": (["Month-to-Month", "One Year", "Two Year"] * (n//3 + 1))[:n],
+        "internet_service": (["Fiber", "DSL", "None"] * (n//3 + 1))[:n],
+        "monthly_charges": [70.35 + (i % 200) for i in range(n)],
+        "support_tickets_last_6m": ([3, 5, 1, 2] * (n//4 + 1))[:n],
+        "churn": (["Yes", "No"] * (n//2 + 1))[:n],
+    })
 
     _orig_open = builtins.open
 
