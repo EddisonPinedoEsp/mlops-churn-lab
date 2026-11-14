@@ -6,6 +6,11 @@ import pytest
 
 API_URL = os.getenv("API_URL", "http://localhost:8000")
 
+pytestmark = pytest.mark.skipif(
+    not os.getenv("API_URL"),
+    reason="API_URL no configurado - solo correr en smoke-test"
+)
+
 
 @pytest.mark.parametrize("customer", [
     {
