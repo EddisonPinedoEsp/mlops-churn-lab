@@ -1,76 +1,68 @@
-"""
-Fixtures compartidas para todos los tests.
-Mocks todos los artefactos ML antes de importar app/main.py,
-así los tests corren sin necesitar archivos entrenados.
-"""
-import builtins
-import io
-import json
+"""Test de training-serving skew: datos y predicciones consistentes."""
 import os
-import sys
-
-import numpy as np
-import pandas as pd
+import requests
 import pytest
-from unittest.mock import MagicMock, patch
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-# ── Datos de prueba ───────────────────────────────────────────────────────────
-
-MOCK_FEATURES = [
-    "gender", "SeniorCitizen", "tenure", "MonthlyCharges", "support_tickets",
-    "Contract_One Year", "Contract_Two Year",
-    "InternetService_Fiber", "InternetService_No",
-]
-
-MOCK_MODEL_INFO = {
-    "model_name": "churn-predictor",
-    "version": "2",
-    "stage": "Production",
-    "model_type": "LogisticRegression",
-    "metrics": {"accuracy": 0.733, "f1": 0.692, "roc_auc": 0.828},
-}
-
-SAMPLE_CUSTOMER = {
-    "gender": "Male",
-    "senior_citizen": 0,
-    "tenure_months": 12,
-    "contract_type": "Month-to-Month",
-    "internet_service": "Fiber",
-    "monthly_charges": 70.35,
-    "support_tickets_last_6m": 3,
-}
 
 
-# ── Fixture principal ─────────────────────────────────────────────────────────
+API_URL = os.getenv("API_URL", "http://localhost:8000")
 
-@pytest.fixture(scope="session")
-def client():
-    """TestClient con todos los artefactos ML mockeados (sin archivos reales)."""
-    _model = MagicMock()
-    _model.predict.return_value = np.array([1])
-    _model.predict_proba.return_value = np.array([[0.15, 0.85]])
 
-    _scaler = MagicMock()
-    _scaler.transform.side_effect = lambda x: x.values
+@pytest.mark.parametrize("customer", [
+    {
+        "gender": "Male",
+        "senior_citizen": 0,
+        "tenure_months": 12,
+        "contract_type": "Month-to-Month",
+        "internet_service": "Fiber",
+        "monthly_charges": 70.35,
+        "support_tickets_last_6m": 3,
+    },
+    {
+        "gender": "Female",
+        "senior_citizen": 1,
+        "tenure_months": 60,
+        "contract_type": "Two Year",
+        "internet_service": "DSL",
+        "monthly_charges": 85.5,
+        "support_tickets_last_6m": 0,
+    },
+])
+def test_api_returns_valid_prediction(customer):
+    """Validar que el endpoint /predict retorna predicciones válidas."""
+    res = requests.post(f"{API_URL}/predict", json=customer)
+    assert res.status_code == 200
 
-    _features_df = pd.DataFrame(MOCK_FEATURES, columns=[0])
+    data = res.json()
+    assert "churn_probability" in data
+    assert 0 <= data["churn_probability"] <= 1
+    assert data["churn_prediction"] in [0, 1]
+    assert data["risk_level"] in ["BAJO", "MEDIO", "ALTO"]
 
-    _orig_open = builtins.open
 
-    def _selective_open(path, *args, **kwargs):
-        if "production_model_info" in str(path):
-            return io.StringIO(json.dumps(MOCK_MODEL_INFO))
-        return _orig_open(path, *args, **kwargs)
+def test_consistent_predictions():
+    """Mismos inputs → mismas predicciones (no hay skew)."""
+    customer = {
+        "gender": "Male",
+        "senior_citizen": 0,
+        "tenure_months": 12,
+        "contract_type": "Month-to-Month",
+        "internet_service": "Fiber",
+        "monthly_charges": 70.35,
+        "support_tickets_last_6m": 3,
+    }
 
-    with patch("joblib.load", side_effect=lambda p: _model if "model" in str(p) else _scaler), \
-         patch("pandas.read_csv", return_value=_features_df), \
-         patch("builtins.open", side_effect=_selective_open):
+    res1 = requests.post(f"{API_URL}/predict", json=customer)
+    res2 = requests.post(f"{API_URL}/predict", json=customer)
 
-        sys.modules.pop("app.main", None)
+    assert res1.json()["churn_probability"] == res2.json()["churn_probability"]
 
-        import app.main as app_module
-        from fastapi.testclient import TestClient
 
-        yield TestClient(app_module.app)
+def test_model_info_accessible():
+    """Verificar que /model/info retorna metadata del modelo."""
+    res = requests.get(f"{API_URL}/model/info")
+    assert res.status_code == 200
+
+    data = res.json()
+    assert "version" in data
+    assert "model_type" in data
+    assert "threshold" in data
